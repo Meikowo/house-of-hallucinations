@@ -1527,6 +1527,12 @@
 <audio id="bgmCollection" loop preload="auto">
   <source src="myhu.mp3" type="audio/mpeg">
 </audio>
+<audio id="bgmValueboard" loop preload="auto">
+  <source src="hupm.mp3" type="audio/mpeg">
+</audio>
+<audio id="bgmLeaderboard" loop preload="auto">
+  <source src="gbpm.mp3" type="audio/mpeg">
+</audio>
 
 <!-- ============================================ -->
 <!--             VIEW 1 — 首页                     -->
@@ -3203,8 +3209,10 @@ function playSound(kind) {
 // BGM 控制 (使用 MP3 音频文件，不同页面不同音乐)
 function getCurrentBGM() {
   const activeView = document.querySelector('.view.active');
-  if (activeView && activeView.id === 'view-collection') {
-    return document.getElementById('bgmCollection');
+  if (activeView) {
+    if (activeView.id === 'view-collection') return document.getElementById('bgmCollection');
+    if (activeView.id === 'view-valueboard') return document.getElementById('bgmValueboard');
+    if (activeView.id === 'view-leaderboard') return document.getElementById('bgmLeaderboard');
   }
   return document.getElementById('bgmLanding');
 }
@@ -3212,6 +3220,8 @@ function getCurrentBGM() {
 function stopAllBGM() {
   document.getElementById('bgmLanding').pause();
   document.getElementById('bgmCollection').pause();
+  document.getElementById('bgmValueboard').pause();
+  document.getElementById('bgmLeaderboard').pause();
 }
 
 function playCurrentBGM() {
