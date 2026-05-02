@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>幻觉拍卖行 · House of Hallucinations</title>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
 <style>
   /* ============ 字体与全局 ============ */
   @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Noto+Serif+SC:wght@400;500;600;700;900&display=swap');
@@ -1719,6 +1724,7 @@
   <div class="disclaimer">
     本馆所有藏品均为AI生成的虚构内容<br>
     <span style="color:var(--gold-dim);font-size:9px">仅供研究与娱乐用途 · 幻觉币无任何实际价值</span>
+    <div id="onlineUsers" style="color:var(--gold-dim);font-size:9px;margin-top:4px;letter-spacing:0.1em"></div>
   </div>
   <div class="footer-card">
     今日成交
@@ -1893,6 +1899,21 @@
 </div>
 
 <script>
+// =========================================================
+//                  Firebase 初始化
+// =========================================================
+const firebaseConfig = {
+  apiKey: "AIzaSyBk712YeCzw4Fn0xeVm4hy5i6lyKdmBBa4",
+  authDomain: "hallucination-auction.firebaseapp.com",
+  databaseURL: "https://hallucination-auction-default-rtdb.firebaseio.com",
+  projectId: "hallucination-auction",
+  storageBucket: "hallucination-auction.firebasestorage.app",
+  messagingSenderId: "436021874666",
+  appId: "1:436021874666:web:bbd051082664abb0f1ec93"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
 // =========================================================
 //                      数据
 // =========================================================
@@ -2101,10 +2122,12 @@ collections.flat().forEach(lot => {
 });
 
 // =========================================================
-//             localStorage 持久化
+//             Firebase 实时同步 + localStorage 持久化
 // =========================================================
 const STORE_KEY = 'hh_state_v1';
+let _firebaseReady = false;
 
+// 保存到 localStorage 并同步到 Firebase
 function saveAll() {
   try {
     const dump = {
@@ -2120,8 +2143,94 @@ function saveAll() {
       userLots: window._userContributedLots || []
     };
     localStorage.setItem(STORE_KEY, JSON.stringify(dump));
+
+    // 同步到 Firebase（仅同步关键拍卖数据）
+    if (_firebaseReady && state.registered) {
+      const syncData = {
+        lastUpdate: Date.now(),
+        updatedBy: state.user.name,
+        lots: {},
+        onlineUsers: {}
+      };
+      collections.flat().forEach(lot => {
+        syncData.lots[lot.id] = {
+          price: lot.price,
+          holder: lot.holder,
+          holderId: lot.holderId,
+          endTime: lot.endTime,
+          history: lot.history.slice(-6)
+        };
+      });
+      syncData.onlineUsers[state.user.name] = {
+        role: state.user.role,
+        balance: state.user.balance,
+        collectionCount: state.user.collection.length,
+        lastSeen: Date.now()
+      };
+      db.ref('auction').update(syncData).catch(e => console.warn('Firebase sync failed', e));
+    }
   } catch (e) { /* localStorage 不可用时静默 */ }
 }
+
+// 监听 Firebase 数据变化（其他用户的操作会实时推送）
+function listenFirebase() {
+  _firebaseReady = true;
+  db.ref('auction/lots').on('value', snapshot => {
+    const data = snapshot.val();
+    if (!data) return;
+    collections.flat().forEach(lot => {
+      const remote = data[lot.id];
+      if (remote && remote.holder !== state.user.name) {
+        // 其他用户更新了这件藏品
+        lot.price = remote.price;
+        lot.holder = remote.holder;
+        lot.holderId = remote.holderId;
+        lot.endTime = remote.endTime;
+        if (remote.history) lot.history = remote.history;
+      }
+    });
+    // 刷新当前页面
+    if (state.registered) {
+      updateHeader();
+      if (document.getElementById('view-auction').classList.contains('active')) renderAuction();
+      if (document.getElementById('view-collection').classList.contains('active')) renderCollection();
+      if (document.getElementById('view-valueboard').classList.contains('active')) renderValueboard();
+    }
+  });
+}
+
+// 上报在线状态
+function reportOnline() {
+  if (!_firebaseReady || !state.registered) return;
+  const userRef = db.ref('onlineUsers/' + state.user.name);
+  userRef.set({
+    role: state.user.role,
+    balance: state.user.balance,
+    collectionCount: state.user.collection.length,
+    lastSeen: Date.now()
+  });
+  // 断开时自动移除
+  userRef.onDisconnect().remove();
+}
+
+// 监听在线用户
+function listenOnlineUsers() {
+  db.ref('onlineUsers').on('value', snapshot => {
+    const users = snapshot.val() || {};
+    const names = Object.keys(users);
+    const el = document.getElementById('onlineUsers');
+    if (el) {
+      if (names.length > 0) {
+        el.textContent = '🟢 在线：' + names.join('、');
+      } else {
+        el.textContent = '';
+      }
+    }
+  });
+}
+
+// 定期上报在线
+setInterval(() => { if (state.registered) reportOnline(); }, 30000);
 
 function loadAll() {
   try {
@@ -2197,8 +2306,8 @@ document.querySelectorAll('.role-option').forEach(el => {
 });
 
 function randomName() {
-  const adj = ['朦胧的', '匿名的', '失眠的', '镜面里的', '注脚处的', '半信半疑的', '过期的', '尚未存在的', '页码错排的', '夜行的'];
-  const noun = ['档案员', '注释者', '钟摆爱好者', '伪造师', '裂缝研究员', '边缘读者', '残页拾取人', '不在场证人', '附录重写者', '尾注收集家'];
+  const adj = ['在逃的', '深夜', '佛系', '隐身', '潜水', '摸鱼的', '路过的', '佛光普照', '熬夜', '吃瓜'];
+  const noun = ['玩家', '侠客', '漫游者', '守望者', '路人甲', '观察员', '旅客', '选手', '访客', '探险家'];
   return adj[Math.floor(Math.random() * adj.length)] + noun[Math.floor(Math.random() * noun.length)];
 }
 
@@ -2224,6 +2333,10 @@ function completeRegister() {
   updateHeader();
   document.body.classList.add('has-user');
   saveAll();
+  // 启动 Firebase 监听和在线上报
+  listenFirebase();
+  listenOnlineUsers();
+  reportOnline();
 }
 
 // =========================================================
@@ -3176,6 +3289,9 @@ if (restored && state.registered) {
   switchView('auction');
   renderAuction();
   updateHeader();
+  // 恢复后也启动 Firebase 监听
+  listenFirebase();
+  reportOnline();
 }
 startMarketSimulation();
 </script>
