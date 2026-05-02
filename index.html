@@ -1911,8 +1911,13 @@ const firebaseConfig = {
   messagingSenderId: "436021874666",
   appId: "1:436021874666:web:bbd051082664abb0f1ec93"
 };
-firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
+let db = null;
+try {
+  if (typeof firebase !== 'undefined') {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+  }
+} catch (e) { console.warn('Firebase init failed, running offline mode', e); }
 
 // =========================================================
 //                      数据
@@ -2145,7 +2150,7 @@ function saveAll() {
     localStorage.setItem(STORE_KEY, JSON.stringify(dump));
 
     // 同步到 Firebase（仅同步关键拍卖数据）
-    if (_firebaseReady && state.registered) {
+    if (db && _firebaseReady && state.registered) {
       const syncData = {
         lastUpdate: Date.now(),
         updatedBy: state.user.name,
@@ -2169,64 +2174,76 @@ function saveAll() {
       };
       db.ref('auction').update(syncData).catch(e => console.warn('Firebase sync failed', e));
     }
-  } catch (e) { /* localStorage 不可用时静默 */ }
+  } catch (e) { console.warn('saveAll failed', e); }
 }
 
 // 监听 Firebase 数据变化（其他用户的操作会实时推送）
 function listenFirebase() {
-  _firebaseReady = true;
-  db.ref('auction/lots').on('value', snapshot => {
-    const data = snapshot.val();
-    if (!data) return;
-    collections.flat().forEach(lot => {
-      const remote = data[lot.id];
-      if (remote && remote.holder !== state.user.name) {
-        // 其他用户更新了这件藏品
-        lot.price = remote.price;
-        lot.holder = remote.holder;
-        lot.holderId = remote.holderId;
-        lot.endTime = remote.endTime;
-        if (remote.history) lot.history = remote.history;
-      }
-    });
-    // 刷新当前页面
-    if (state.registered) {
-      updateHeader();
-      if (document.getElementById('view-auction').classList.contains('active')) renderAuction();
-      if (document.getElementById('view-collection').classList.contains('active')) renderCollection();
-      if (document.getElementById('view-valueboard').classList.contains('active')) renderValueboard();
-    }
-  });
+  if (!db) return;
+  try {
+    _firebaseReady = true;
+    db.ref('auction/lots').on('value', snapshot => {
+      try {
+        const data = snapshot.val();
+        if (!data) return;
+        collections.flat().forEach(lot => {
+          const remote = data[lot.id];
+          if (remote && remote.holder !== state.user.name) {
+            // 其他用户更新了这件藏品
+            lot.price = remote.price;
+            lot.holder = remote.holder;
+            lot.holderId = remote.holderId;
+            lot.endTime = remote.endTime;
+            if (remote.history) lot.history = remote.history;
+          }
+        });
+        // 刷新当前页面
+        if (state.registered) {
+          updateHeader();
+          if (document.getElementById('view-auction').classList.contains('active')) renderAuction();
+          if (document.getElementById('view-collection').classList.contains('active')) renderCollection();
+          if (document.getElementById('view-valueboard').classList.contains('active')) renderValueboard();
+        }
+      } catch (e) { console.warn('Firebase data parse error', e); }
+    }, error => { console.warn('Firebase listen error', error); });
+  } catch (e) { console.warn('Firebase init listen failed', e); }
 }
 
 // 上报在线状态
 function reportOnline() {
-  if (!_firebaseReady || !state.registered) return;
-  const userRef = db.ref('onlineUsers/' + state.user.name);
-  userRef.set({
-    role: state.user.role,
-    balance: state.user.balance,
-    collectionCount: state.user.collection.length,
-    lastSeen: Date.now()
-  });
-  // 断开时自动移除
-  userRef.onDisconnect().remove();
+  if (!db || !_firebaseReady || !state.registered) return;
+  try {
+    const userRef = db.ref('onlineUsers/' + state.user.name);
+    userRef.set({
+      role: state.user.role,
+      balance: state.user.balance,
+      collectionCount: state.user.collection.length,
+      lastSeen: Date.now()
+    });
+    // 断开时自动移除
+    userRef.onDisconnect().remove();
+  } catch (e) { console.warn('reportOnline failed', e); }
 }
 
 // 监听在线用户
 function listenOnlineUsers() {
-  db.ref('onlineUsers').on('value', snapshot => {
-    const users = snapshot.val() || {};
-    const names = Object.keys(users);
-    const el = document.getElementById('onlineUsers');
-    if (el) {
-      if (names.length > 0) {
-        el.textContent = '🟢 在线：' + names.join('、');
-      } else {
-        el.textContent = '';
-      }
-    }
-  });
+  if (!db) return;
+  try {
+    db.ref('onlineUsers').on('value', snapshot => {
+      try {
+        const users = snapshot.val() || {};
+        const names = Object.keys(users);
+        const el = document.getElementById('onlineUsers');
+        if (el) {
+          if (names.length > 0) {
+            el.textContent = '🟢 在线：' + names.join('、');
+          } else {
+            el.textContent = '';
+          }
+        }
+      } catch (e) {}
+    }, error => { console.warn('listenOnlineUsers error', error); });
+  } catch (e) { console.warn('listenOnlineUsers failed', e); }
 }
 
 // 定期上报在线
